@@ -128,7 +128,7 @@ else:
             st.session_state.logged_in = False
             st.rerun()
 
-    # --- NUEVO REGISTRO (SIN ST.FORM PARA INTERACTIVIDAD) ---
+    # --- NUEVO REGISTRO ---
     if menu == "➕ Nuevo Registro":
         st.header("📝 Nuevo Registro de Propiedad")
         st.info("Completa los datos. La vista se actualizará al seleccionar las opciones.")
@@ -149,7 +149,7 @@ else:
         
         st.markdown("---")
 
-        # --- SECCIÓN 2: FINANCIERA (AHORA SÍ INTERACTIVO) ---
+        # --- SECCIÓN 2: FINANCIERA ---
         st.subheader("2. Finanzas")
         col_mon, col_fin = st.columns([1, 3])
         moneda = col_mon.selectbox("Moneda", ["COP - Colombia", "USD - Dólar", "EUR - Euro", "PEN - Sol Perú", "VES - Bolívar", "CLP - Chile", "ARS - Argentina"])
@@ -157,14 +157,12 @@ else:
         
         modo_fin = st.radio("Modalidad de Negocio:", ["Porcentaje (%)", "Pase (Sobreprecio)"], horizontal=True)
         
-        # Variables de cálculo
         precio_venta_final = 0.0
         ganancia_mia = 0.0
         neto_propietario = 0.0
         
         if modo_fin == "Porcentaje (%)":
             c_f1, c_f2 = st.columns(2)
-            # Input normal
             precio_total_input = c_f1.number_input(f"Precio Total de Venta ({simbolo})", min_value=0.0, step=1000000.0)
             pct_comision = c_f2.number_input("Porcentaje Comisión (%)", value=3.0)
             
@@ -172,11 +170,9 @@ else:
             neto_propietario = precio_total_input - ganancia_mia
             precio_venta_final = precio_total_input
             
-        else: # MODO PASE (AQUÍ ESTÁ LO QUE PEDISTE)
+        else: # MODO PASE
             st.success("Modo Pase Activo: Ingresa lo que pide el dueño y tu precio de venta.")
             c_f1, c_f2 = st.columns(2)
-            
-            # LOS DOS CAMPOS QUE FALTABAN
             neto_propietario_input = c_f1.number_input(f"Neto Propietario (Lo que pide el dueño)", min_value=0.0, step=1000000.0)
             precio_venta_input = c_f2.number_input(f"Precio Venta (En cuánto lo ofreces)", min_value=0.0, step=1000000.0)
             
@@ -188,7 +184,7 @@ else:
             neto_propietario = neto_propietario_input
             precio_venta_final = precio_venta_input
 
-        # RESULTADOS EN TIEMPO REAL
+        # RESULTADOS
         c_res1, c_res2 = st.columns(2)
         c_res1.metric("💰 Ganancia Mía", f"{simbolo} {ganancia_mia:,.0f}")
         c_res2.metric("👤 Para Propietario", f"{simbolo} {neto_propietario:,.0f}")
@@ -216,41 +212,49 @@ else:
         estado_fisico = r3c2.selectbox("🏗️ Estado Físico", ["Excelente", "Bueno", "Regular", "Remodelar"])
         
         amenidades = st.multiselect("💎 Amenidades", ["Piscina", "Vigilancia", "Ascensor", "Gym", "BBQ", "Salón Social", "Canchas"])
-        notas_obs = st.text_area("📝 Notas u Observaciones")
-        fotos = st.file_uploader("📸 SUBIR FOTOS (Clic aquí)", accept_multiple_files=True)
+        notas_obs = st.text_area("📝 Notas u Observaciones (General)")
+        
+        # Fotos Sección Normal
+        st.caption("Fotos Generales del Inmueble:")
+        fotos_gral = st.file_uploader("📸 Subir Fotos (Clic aquí)", accept_multiple_files=True, key="fotos_gral")
 
         st.markdown("---")
 
-        # --- SECCIÓN 4: SOBRE PLANOS (INTERACTIVA - DIBUJO WHATSAPP) ---
+        # --- SECCIÓN 4: SOBRE PLANOS (CORREGIDA CON FOTOS) ---
         st.subheader("4. Apartamentos Sobre Planos")
         es_planos = st.checkbox("🏗️ ¿Es un proyecto Sobre Planos?")
         
-        # Variables por defecto
         const_nom = ""; proy_nom = ""; fecha_ini = ""; fecha_fin = ""
-        monto_ini = 0.0; num_cuotas = 0
+        monto_ini = 0.0; num_cuotas = 0; fotos_planos = []
         
         if es_planos:
-            st.markdown("##### 🏗️ Detalles del Proyecto (Diagrama)")
-            # FILA 1: Constructor y Fecha Inicio (Como tu dibujo, aprox)
+            st.markdown("##### 🏗️ Detalles del Proyecto")
             sp_f1_c1, sp_f1_c2, sp_f1_c3 = st.columns([2, 2, 1])
             const_nom = sp_f1_c1.text_input("Nombre Constructor")
             proy_nom = sp_f1_c2.text_input("Nombre Proyecto")
             fecha_ini = sp_f1_c3.date_input("Fecha Inicio Obra")
             
-            # FILA 2: Monto, Cuotas y Fecha Fin
             sp_f2_c1, sp_f2_c2, sp_f2_c3 = st.columns([2, 1, 2])
             monto_ini = sp_f2_c1.number_input("Monto Inicial", min_value=0.0)
             num_cuotas = sp_f2_c2.number_input("N° de Cuotas", min_value=1)
             fecha_fin = sp_f2_c3.date_input("Fecha Posible Culminación")
             
-            st.caption("Nota: El botón de fotos general ya sirve para cargar renders.")
+            # --- AQUÍ ESTÁ EL CAMBIO SOLICITADO ---
+            st.markdown("##### 📸 Multimedia del Proyecto")
+            fotos_planos = st.file_uploader("📂 Subir Renders / Avances de Obra (Específico Planos)", accept_multiple_files=True, key="fotos_planos")
+            # -------------------------------------
 
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # --- BOTÓN GUARDAR FINAL ---
+        # --- BOTÓN GUARDAR ---
         if st.button("💾 GUARDAR TODO EN LA NUBE", type="primary"):
             if titulo and precio_venta_final > 0:
-                n_fotos = [f.name for f in fotos] if fotos else "Sin fotos"
+                # Recopilar Fotos de ambas secciones
+                lista_fotos = []
+                if fotos_gral: lista_fotos.extend([f.name for f in fotos_gral])
+                if es_planos and fotos_planos: lista_fotos.extend([f.name for f in fotos_planos])
+                
+                n_fotos_str = str(lista_fotos) if lista_fotos else "Sin fotos"
                 id_prop = str(random.randint(10000, 99999))
                 
                 datos = [
@@ -258,7 +262,7 @@ else:
                     ganancia_mia, neto_propietario, moneda, ciudad, barrio, 
                     prop_nom, prop_ced, prop_tel, prop_alt, prop_email,
                     area, habs, piso, antig, parqueadero, estado_fisico, 
-                    ", ".join(amenidades), notas_obs, str(n_fotos),
+                    ", ".join(amenidades), notas_obs, n_fotos_str,
                     "Sí" if es_planos else "No",
                     const_nom, proy_nom, str(fecha_ini), str(fecha_fin), monto_ini, num_cuotas,
                     "Disponible", "", "", 0, 0
@@ -270,7 +274,7 @@ else:
                 else: st.error("Error al guardar en Google Sheets")
             else: st.warning("⚠️ Faltan datos obligatorios (Título o Precio)")
 
-    # --- INVENTARIO & CRM (MANTENIDO) ---
+    # --- INVENTARIO & CRM ---
     elif menu == "📂 Inventario & CRM":
         st.header("📂 Inventario y Gestión")
         df = cargar_datos("Propiedades")
@@ -283,12 +287,13 @@ else:
                 idx = df[df["Título"] + " - " + df["Propietario"] == seleccion].index[0]
                 d = df.iloc[idx]
                 
-                # Ficha Técnica
                 st.markdown(f"### {d.get('Título')}")
                 col_i1, col_i2 = st.columns([1, 2])
                 with col_i1:
                     st.info(f"💰 Precio: {d.get('Moneda')} ${pd.to_numeric(d.get('Precio Venta',0), errors='coerce'):,.0f}")
-                    if d.get('Fotos') != "Sin fotos": st.write(f"📁 Archivos: {d.get('Fotos')}")
+                    if d.get('Fotos') != "Sin fotos": 
+                        st.write("📷 Archivos cargados:")
+                        st.code(d.get('Fotos'))
                     else: st.write("Sin fotos")
                 with col_i2:
                     st.markdown('<div class="ficha-tecnica">', unsafe_allow_html=True)
@@ -298,6 +303,7 @@ else:
                     
                     if d.get("Sobre Planos") == "Sí":
                         st.warning(f"🚧 **PROYECTO:** {d.get('Proyecto')} por {d.get('Constructor')}")
+                        st.write(f"📅 **Entrega:** {d.get('Fecha Fin')} | **Cuotas:** {d.get('Cuotas')}")
                     st.markdown("</div>", unsafe_allow_html=True)
 
     elif menu == "📊 Estadísticas":
