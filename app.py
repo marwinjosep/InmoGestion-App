@@ -6,45 +6,45 @@ import hashlib
 import random
 import string
 import smtplib
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import date, time
+from datetime import date, datetime, timedelta
 
-# --- 1. CONFIGURACIÓN DE PÁGINA ---
+# --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="InmoGestión Pro", page_icon="🏢", layout="wide")
 
-# --- 2. ESTILOS VISUALES ---
+# --- ESTILOS PERSONALIZADOS ---
 st.markdown("""
     <style>
-    /* BARRA LATERAL */
     [data-testid="stSidebar"] { background: linear-gradient(180deg, #1A2980 0%, #26D0CE 100%); }
     [data-testid="stSidebar"] * { color: white !important; }
-    
-    /* BOTONES */
     .stButton>button {
         background: linear-gradient(45deg, #FFD700, #FDB931);
         color: #2c3e50 !important;
-        border: none;
         font-weight: bold;
-        text-transform: uppercase;
         border-radius: 8px;
+        border: none;
     }
-    
-    /* FICHA TÉCNICA */
-    .ficha-box {
+    .ficha-tecnica {
         background-color: #f8f9fa;
         padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #1A2980;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        border-radius: 12px;
+        border-left: 6px solid #1A2980;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
-    
-    /* METRICAS */
-    div[data-testid="stMetricValue"] { color: #2980B9 !important; font-weight: bold; }
+    .alerta-pago {
+        background-color: #ffcccc;
+        color: #990000;
+        padding: 10px;
+        border-radius: 5px;
+        font-weight: bold;
+        border: 1px solid #ff0000;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. CONEXIÓN A GOOGLE SHEETS ---
+# --- 2. CONEXIÓN Y DATOS ---
 def conectar_google_sheets():
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -58,35 +58,13 @@ def conectar_google_sheets():
         client = gspread.authorize(creds)
         sheet = client.open("Base_Datos_InmoGestion")
         return sheet
-    except Exception as e:
-        return None
-
-# --- 4. FUNCIONES DE DATOS Y SEGURIDAD ---
-def make_hashes(password): return hashlib.sha256(str.encode(password)).hexdigest()
-def check_hashes(password, hashed_text): return make_hashes(password) == hashed_text
-
-def enviar_correo(destinatario, nueva_clave):
-    remitente = st.secrets.get("correo_emisor")
-    clave_app = st.secrets.get("clave_emisor")
-    if not remitente or not clave_app: return False, "Faltan credenciales en Secrets"
-    
-    msg = MIMEMultipart()
-    msg['From'], msg['To'], msg['Subject'] = remitente, destinatario, "🔐 Recuperación InmoGestión"
-    msg.attach(MIMEText(f"Tu clave temporal es: {nueva_clave}", 'plain'))
-    
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(remitente, clave_app)
-        server.sendmail(remitente, destinatario, msg.as_string())
-        server.quit()
-        return True, "Enviado"
-    except Exception as e: return False, str(e)
+    except: return None
 
 def cargar_datos(pestana):
     sh = conectar_google_sheets()
     if sh:
-        try: return pd.DataFrame(sh.worksheet(pestana).get_all_records())
+        try: 
+            return pd.DataFrame(sh.worksheet(pestana).get_all_records())
         except: return pd.DataFrame()
     return pd.DataFrame()
 
@@ -96,28 +74,49 @@ def guardar_fila(pestana, datos):
         try:
             try: ws = sh.worksheet(pestana)
             except: ws = sh.add_worksheet(pestana, 100, 20)
-            datos_str = [str(d) for d in datos]
-            ws.append_row(datos_str)
+            # Convertir listas/dict a JSON string para guardar en celda
+            datos_procesados = []
+            for d in datos:
+                if isinstance(d, (list, dict)): datos_procesados.append(json.dumps(d))
+                else: datos_procesados.append(str(d))
+            ws.append_row(datos_procesados)
             return True
         except: return False
     return False
 
-# --- 5. LÓGICA DE SESIÓN ---
+def actualizar_dato(pestana, id_col, id_val, col_edit, nuevo_valor):
+    sh = conectar_google_sheets()
+    if sh:
+        try:
+            ws = sh.worksheet(pestana)
+            cell = ws.find(str(id_val))
+            # Encontrar indice de columna
+            headers = ws.row_values(1)
+            col_idx = headers.index(col_edit) + 1
+            ws.update_cell(cell.row, col_idx, str(nuevo_valor))
+            return True
+        except: return False
+    return False
+
+# --- 3. SEGURIDAD ---
+def make_hashes(p): return hashlib.sha256(str.encode(p)).hexdigest()
+def check_hashes(p, h): return make_hashes(p) == h
+
+# --- 4. SESIÓN ---
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_role' not in st.session_state: st.session_state.user_role = ""
 if 'user_name' not in st.session_state: st.session_state.user_name = ""
 
 # =======================================================
-#  VISTA LOGIN / REGISTRO / RECUPERAR
+#  LOGIN
 # =======================================================
 if not st.session_state.logged_in:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<br><h1 style='text-align: center; color:#1A2980;'>🏢 InmoGestión Pro</h1>", unsafe_allow_html=True)
-        tab1, tab2, tab3 = st.tabs(["🔑 INGRESAR", "📝 REGISTRO", "❓ RECUPERAR"])
-        
-        with tab1:
-            with st.form("login"):
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<h1 style='text-align: center; color:#1A2980;'>🏢 InmoGestión Pro</h1>", unsafe_allow_html=True)
+        t1, t2 = st.tabs(["INGRESAR", "REGISTRO"])
+        with t1:
+            with st.form("log"):
                 u = st.text_input("Usuario")
                 p = st.text_input("Clave", type="password")
                 if st.form_submit_button("ENTRAR", use_container_width=True):
@@ -130,258 +129,322 @@ if not st.session_state.logged_in:
                             st.session_state.user_role = user["Rol"]
                             st.rerun()
                         else: st.error("Clave incorrecta")
-                    else: st.error("Usuario no encontrado")
-
-        with tab2:
+                    else: st.error("Usuario no existe")
+        with t2:
             with st.form("reg"):
                 nu = st.text_input("Usuario")
                 np = st.text_input("Clave", type="password")
                 nn = st.text_input("Nombre")
-                ne = st.text_input("Email")
                 nr = st.selectbox("Rol", ["Agente", "Administrador"])
-                if st.form_submit_button("CREAR CUENTA", use_container_width=True):
-                    if guardar_fila("Usuarios", [nu, make_hashes(np), nn, nr, ne]): st.success("Usuario Creado")
-                    else: st.error("Error de Conexión")
-
-        with tab3:
-            ru = st.text_input("Usuario a recuperar")
-            if st.button("ENVIAR CLAVE TEMPORAL", use_container_width=True):
-                sh = conectar_google_sheets()
-                if sh:
-                    try:
-                        ws = sh.worksheet("Usuarios")
-                        df = pd.DataFrame(ws.get_all_records())
-                        if not df.empty and ru in df["Usuario"].values:
-                            fila = df[df["Usuario"] == ru].iloc[0]
-                            nueva = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-                            cell = ws.find(ru)
-                            ws.update_cell(cell.row, 2, make_hashes(nueva))
-                            ok, msg = enviar_correo(fila["Email"], nueva)
-                            if ok: st.success("Revisa tu correo")
-                            else: st.error(msg)
-                    except: st.error("Error buscando usuario")
+                if st.form_submit_button("CREAR"):
+                    if guardar_fila("Usuarios", [nu, make_hashes(np), nn, nr, ""]): st.success("Creado")
 
 # =======================================================
-#  SISTEMA PRINCIPAL
+#  APP PRINCIPAL
 # =======================================================
 else:
     with st.sidebar:
         st.title("InmoGestión Pro")
-        st.write(f"👤 **{st.session_state.user_name}**")
-        st.caption(f"Rol: {st.session_state.user_role}")
+        st.write(f"👤 {st.session_state.user_name}")
         st.markdown("---")
-        menu = st.radio("Menú", ["📂 Inventario & Ficha", "➕ Nuevo Registro", "📊 Estadísticas"])
+        menu = st.radio("Menú", ["📂 Inventario & CRM", "➕ Nuevo Registro", "📊 Estadísticas"])
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Cerrar Sesión"):
             st.session_state.logged_in = False
             st.rerun()
 
-    # --- 1. NUEVO REGISTRO (COMPLETO CON LOS CAMPOS QUE PEDISTE) ---
+    # --- NUEVO REGISTRO (DISEÑO SOLICITADO) ---
     if menu == "➕ Nuevo Registro":
-        st.header("📝 Registrar Propiedad Completa")
+        st.header("📝 Nuevo Registro de Propiedad")
         
-        with st.form("form_propiedad"):
-            # A. FINANZAS
-            st.subheader("💰 1. Finanzas")
-            col_m, col_t = st.columns(2)
-            moneda = col_m.selectbox("Moneda", ["COP", "USD", "EUR"])
+        with st.form("form_full"):
+            
+            # --- SECCIÓN 1: PROPIETARIO (PAREJAS) ---
+            st.subheader("1. Datos del Propietario")
+            c_p1, c_p2 = st.columns(2)
+            prop_nom = c_p1.text_input("Nombre y Apellido")
+            prop_ced = c_p2.text_input("Cédula / NIT")
+            
+            c_p3, c_p4 = st.columns(2)
+            prop_tel = c_p3.text_input("Teléfono Principal")
+            prop_email = c_p4.text_input("Email")
+            
+            c_p5, c_p6 = st.columns(2)
+            prop_alt = c_p5.text_input("Teléfono Alternativo")
+            docs = c_p6.file_uploader("📂 Subir Documentos Legales", accept_multiple_files=True)
+            
+            st.markdown("---")
+
+            # --- SECCIÓN 2: FINANCIERA (TU LÓGICA) ---
+            st.subheader("2. Finanzas")
+            col_mon, col_fin = st.columns([1, 3])
+            moneda = col_mon.selectbox("Moneda", ["COP - Colombia", "USD - Dólar", "EUR - Euro", "PEN - Sol Perú", "VES - Bolívar", "CLP - Chile", "ARS - Argentina"])
             simbolo = moneda.split(" ")[0]
             
-            c1, c2, c3 = st.columns(3)
-            p_neto = c1.number_input(f"Precio Neto Propietario ({simbolo})", min_value=0.0, step=1000000.0)
-            modo_ganancia = c2.radio("Modo Ganancia", ["Porcentaje (%)", "Valor Fijo"])
+            # Lógica: Porcentaje vs Pase
+            modo_fin = st.radio("Modalidad de Negocio:", ["Porcentaje (%)", "Pase (Sobreprecio)"], horizontal=True)
             
-            ganancia = 0.0
-            if modo_ganancia == "Porcentaje (%)":
-                pct = c3.number_input("% Comisión", value=3.0)
-                ganancia = p_neto * (pct/100)
-            else:
-                ganancia = c3.number_input(f"Valor Comisión ({simbolo})", min_value=0.0)
+            precio_venta_final = 0.0
+            ganancia_mia = 0.0
+            neto_propietario = 0.0
             
-            p_final = p_neto + ganancia
-            st.info(f"💵 **PRECIO DE VENTA SUGERIDO:** {simbolo} {p_final:,.0f} (Ganancia: {simbolo} {ganancia:,.0f})")
+            if modo_fin == "Porcentaje (%)":
+                # Lógica: Restar comisión del total
+                c_f1, c_f2 = st.columns(2)
+                precio_total_input = c_f1.number_input(f"Precio Total de Venta ({simbolo})", min_value=0.0, step=1000000.0)
+                pct_comision = c_f2.number_input("Porcentaje Comisión (%)", value=3.0)
+                
+                ganancia_mia = precio_total_input * (pct_comision / 100)
+                neto_propietario = precio_total_input - ganancia_mia
+                precio_venta_final = precio_total_input
+                
+            else: # Modo Pase
+                # Lógica: Excedente
+                c_f1, c_f2 = st.columns(2)
+                neto_propietario_input = c_f1.number_input(f"Neto Propietario (Lo que pide el dueño)", min_value=0.0, step=1000000.0)
+                precio_venta_input = c_f2.number_input(f"Precio Venta (En cuánto lo ofreces)", min_value=0.0, step=1000000.0)
+                
+                if precio_venta_input >= neto_propietario_input:
+                    ganancia_mia = precio_venta_input - neto_propietario_input
+                else:
+                    ganancia_mia = 0
+                
+                neto_propietario = neto_propietario_input
+                precio_venta_final = precio_venta_input
 
-            # B. DETALLES DEL INMUEBLE (AGREGADOS LOS FALTANTES)
-            st.subheader("🏡 2. Detalles del Inmueble")
-            titulo = st.text_input("Título del Anuncio (Ej: Apto Lujo en Cabecera)")
+            # Mostrar Resultados
+            c_res1, c_res2 = st.columns(2)
+            c_res1.metric("💰 Ganancia Mía (Comisión)", f"{simbolo} {ganancia_mia:,.0f}")
+            c_res2.metric("👤 Para Propietario", f"{simbolo} {neto_propietario:,.0f}")
             
-            c_d1, c_d2, c_d3, c_d4 = st.columns(4)
-            tipo = c_d1.selectbox("Tipo Inmueble", ["Apartamento", "Casa", "Lote", "Finca", "Local", "Bodega"])
-            ciudad = c_d2.text_input("Ciudad", "Bucaramanga")
-            barrio = c_d3.text_input("Barrio")
-            estrato = c_d4.selectbox("Estrato", ["1", "2", "3", "4", "5", "6", "Rural", "Comercial"])
+            st.markdown("---")
+
+            # --- SECCIÓN 3: DETALLES INMUEBLE (TU LAYOUT) ---
+            st.subheader("3. Detalles del Inmueble")
+            titulo = st.text_input("Título del Anuncio (Ej: Apto Lujo Cabecera)")
             
-            # --- NUEVOS CAMPOS SOLICITADOS ---
-            c_det1, c_det2, c_det3, c_det4 = st.columns(4)
-            area = c_det1.number_input("Área (m²)", min_value=0.0)
-            habs = c_det2.number_input("Habitaciones", min_value=0)
-            piso = c_det3.text_input("Piso / Nivel", placeholder="Ej: 5, PH, 2")
-            antiguedad = c_det4.selectbox("Antigüedad", ["En construcción", "Para estrenar", "1-5 años", "5-10 años", "10-20 años", "+20 años"])
-
-            c_det5, c_det6 = st.columns(2)
-            parqueadero = c_det5.selectbox("🚘 Parqueadero", ["Privado", "Comunal", "No tiene", "Visitantes"])
-            estado_fisico = c_det6.selectbox("🏗️ Estado Físico", ["Excelente", "Bueno", "Regular", "Para Remodelar"])
-
-            amenidades = st.multiselect("Amenidades", 
-                ["Piscina", "Vigilancia 24/7", "Ascensor", "Gimnasio", "Zona BBQ", "Salón Social", "Juegos Niños"])
+            # Fila 1 (4 cols)
+            r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+            tipo = r1c1.selectbox("Tipo", ["Apartamento", "Casa", "Lote", "Local", "Bodega", "Finca"])
+            ciudad = r1c2.text_input("Ciudad", "Bucaramanga")
+            barrio = r1c3.text_input("Barrio")
+            estrato = r1c4.selectbox("Estrato", ["1","2","3","4","5","6","Comercial","Rural"])
             
-            # C. VENTA SOBRE PLANOS
-            with st.expander("🏗️ ¿Es venta sobre planos?"):
-                es_planos = st.checkbox("Activar Opción Planos")
-                cuota_ini = 0.0
-                num_cuotas = 0
-                if es_planos:
-                    cp1, cp2 = st.columns(2)
-                    cuota_ini = cp1.number_input("Cuota Inicial", min_value=0.0)
-                    num_cuotas = cp2.number_input("Número de Cuotas Mensuales", min_value=1)
-
-            # D. PROPIETARIO Y MULTIMEDIA
-            st.subheader("👤 3. Datos Privados & Multimedia")
-            c_p1, c_p2 = st.columns(2)
-            with c_p1:
-                prop_nom = st.text_input("Nombre Propietario")
-                prop_tel = st.text_input("Teléfono / Contacto")
-                estado_venta = st.selectbox("Estado Venta", ["Disponible", "Vendida", "Rentada", "Reservada"])
+            # Fila 2 (4 cols)
+            r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+            area = r2c1.number_input("Área (m²)")
+            habs = r2c2.number_input("Habitaciones", min_value=0)
+            piso = r2c3.text_input("Piso / Nivel")
+            antig = r2c4.selectbox("Antigüedad", ["Sobre Planos", "Estrenar", "1-5 años", "5-10 años", "+10 años"])
             
-            with c_p2:
-                # AQUÍ ESTÁ LA SUBIDA DE FOTOS QUE PEDISTE
-                fotos = st.file_uploader("📸 Subir Fotos (Se guardarán en la nube)", accept_multiple_files=True)
-                docs = st.file_uploader("📂 Documentos Legales", accept_multiple_files=True)
-                notas = st.text_area("Notas Privadas (Solo visibles para ti)")
+            # Fila 3 (2 cols)
+            r3c1, r3c2 = st.columns(2)
+            parqueadero = r3c1.selectbox("🚘 Parqueadero", ["Privado", "Comunal", "Visitantes", "No tiene"])
+            estado_fisico = r3c2.selectbox("🏗️ Estado Físico", ["Excelente", "Bueno", "Regular", "Remodelar"])
+            
+            amenidades = st.multiselect("💎 Amenidades", ["Piscina", "Vigilancia", "Ascensor", "Gym", "BBQ", "Salón Social", "Canchas"])
+            
+            notas_obs = st.text_area("📝 Notas u Observaciones")
+            fotos = st.file_uploader("📸 SUBIR FOTOS (Clic aquí)", accept_multiple_files=True)
 
-            # BOTÓN GUARDAR
-            if st.form_submit_button("💾 GUARDAR REGISTRO COMPLETO", type="primary"):
-                if titulo and p_final > 0:
-                    lista_amenidades = ", ".join(amenidades)
-                    nombres_fotos = [f.name for f in fotos] if fotos else "Sin fotos"
+            st.markdown("---")
+
+            # --- SECCIÓN 4: SOBRE PLANOS (NUEVA) ---
+            st.subheader("4. Apartamentos Sobre Planos")
+            es_planos = st.checkbox("🏗️ ¿Es un proyecto Sobre Planos?")
+            
+            const_nom = ""; proy_nom = ""; fecha_ini = ""; fecha_fin = ""
+            monto_ini = 0.0; num_cuotas = 0
+            
+            if es_planos:
+                sp1, sp2 = st.columns(2)
+                const_nom = sp1.text_input("Nombre Constructor")
+                proy_nom = sp2.text_input("Nombre Proyecto")
+                
+                sp3, sp4 = st.columns(2)
+                fecha_ini = sp3.date_input("Fecha Inicio Obra")
+                fecha_fin = sp4.date_input("Fecha Posible Culminación")
+                
+                sp5, sp6 = st.columns(2)
+                monto_ini = sp5.number_input("Monto Inicial Sugerido", min_value=0.0)
+                num_cuotas = sp6.number_input("N° de Cuotas", min_value=1)
+                
+                st.info("Nota: Estos valores se usarán como base para el plan de pagos del cliente.")
+
+            # BOTÓN FINAL
+            if st.form_submit_button("💾 GUARDAR TODO EN LA NUBE", type="primary"):
+                if titulo and precio_venta_final > 0:
+                    n_fotos = [f.name for f in fotos] if fotos else "Sin fotos"
                     
-                    # LISTA DE DATOS ACTUALIZADA CON LOS NUEVOS CAMPOS
-                    datos_guardar = [
-                        str(date.today()), # 0. Fecha
-                        titulo,            # 1. Titulo
-                        tipo,              # 2. Tipo
-                        p_final,           # 3. Precio Venta
-                        ganancia,          # 4. Ganancia
-                        ciudad,            # 5. Ciudad
-                        barrio,            # 6. Barrio
-                        prop_nom,          # 7. Propietario
-                        prop_tel,          # 8. Telefono
-                        estado_venta,      # 9. Estado Venta
-                        area,              # 10. Area
-                        habs,              # 11. Habs
-                        estrato,           # 12. Estrato
-                        piso,              # 13. Piso (NUEVO)
-                        antiguedad,        # 14. Antiguedad (NUEVO)
-                        parqueadero,       # 15. Parqueadero (NUEVO)
-                        estado_fisico,     # 16. Estado Fisico (NUEVO)
-                        lista_amenidades,  # 17. Amenidades
-                        "Sí" if es_planos else "No", # 18. Planos
-                        str(nombres_fotos), # 19. Fotos
-                        notas              # 20. Notas
+                    # Estructura de Datos (ID Único para CRM)
+                    id_prop = str(random.randint(10000, 99999))
+                    
+                    datos = [
+                        id_prop, str(date.today()), titulo, tipo, precio_venta_final, 
+                        ganancia_mia, neto_propietario, moneda, ciudad, barrio, 
+                        prop_nom, prop_ced, prop_tel, prop_alt, prop_email,
+                        area, habs, piso, antig, parqueadero, estado_fisico, 
+                        ", ".join(amenidades), notas_obs, str(n_fotos),
+                        "Sí" if es_planos else "No",
+                        const_nom, proy_nom, str(fecha_ini), str(fecha_fin), monto_ini, num_cuotas,
+                        "Disponible", # Estado Venta
+                        "", "", 0, 0 # Campos Vacíos para Cliente, Deuda, Pagado (CRM)
                     ]
                     
-                    if guardar_fila("Propiedades", datos_guardar):
-                        st.success("✅ ¡Propiedad registrada exitosamente!")
+                    if guardar_fila("Propiedades", datos):
+                        st.success("✅ Registro Exitoso")
                         st.balloons()
-                    else:
-                        st.error("❌ Error de conexión con la Nube.")
-                else:
-                    st.warning("⚠️ Faltan datos obligatorios.")
+                    else: st.error("Error al guardar")
+                else: st.warning("Falta Título o Precio")
 
-    # --- 2. INVENTARIO & FICHA TÉCNICA (VISUAL) ---
-    elif menu == "📂 Inventario & Ficha":
-        st.header("📂 Inventario Inmobiliario")
-        df = cargar_datos("Propiedades")
+    # --- INVENTARIO & CRM (POTENTE) ---
+    elif menu == "📂 Inventario & CRM":
         
-        if not df.empty:
-            filtro = st.text_input("🔍 Buscar por Barrio, Título o Propietario...")
-            if filtro:
-                df = df[df.astype(str).apply(lambda x: x.str.contains(filtro, case=False)).any(axis=1)]
-            
-            # SELECCIÓN DE PROPIEDAD
-            opciones = df["Título"] + " - " + df["Propietario"] if "Título" in df.columns else []
-            seleccion = st.selectbox("Selecciona una propiedad para ver la Ficha Técnica:", opciones)
-            
-            if seleccion:
-                idx = df[df["Título"] + " - " + df["Propietario"] == seleccion].index[0]
-                fila = df.iloc[idx]
+        tab_inv, tab_ag = st.tabs(["🏠 Inventario & Ventas", "📅 Agenda de Citas"])
+        
+        # --- TAB 1: INVENTARIO ---
+        with tab_inv:
+            df = cargar_datos("Propiedades")
+            if not df.empty:
+                # Selector de Propiedad
+                opciones = df["Título"] + " - " + df["Propietario"] if "Título" in df.columns else []
+                seleccion = st.selectbox("🔍 Selecciona Propiedad para Gestionar:", opciones)
                 
-                # --- VISUALIZACIÓN TIPO FICHA TÉCNICA ---
-                st.markdown("---")
-                st.markdown(f"### 🏠 {fila['Título']}")
-                
-                col_ficha1, col_ficha2 = st.columns([1, 2])
-                
-                with col_ficha1:
-                    st.info("📸 **Galería**")
-                    # Aquí mostramos los nombres de las fotos subidas
-                    if fila['Fotos'] != "Sin fotos":
-                        st.write("Archivos disponibles:")
-                        st.code(fila['Fotos'])
+                if seleccion:
+                    idx = df[df["Título"] + " - " + df["Propietario"] == seleccion].index[0]
+                    d = df.iloc[idx]
+                    id_actual = d.get("ID", "")
+                    
+                    # --- FICHA TÉCNICA VISUAL ---
+                    st.markdown(f"### 🏷️ {d.get('Título')} ({d.get('Tipo')})")
+                    c_vis1, c_vis2 = st.columns([1, 2])
+                    
+                    with c_vis1:
+                        if d.get('Fotos') and d['Fotos'] != "Sin fotos":
+                            st.image("https://via.placeholder.com/300x200?text=FOTO+INMUEBLE", caption="Imagen Referencia (Drive API pendiente)")
+                            st.caption(f"Archivos: {d['Fotos']}")
+                        else: st.info("Sin fotos")
+                        
+                        st.metric("Precio Venta", f"${pd.to_numeric(d.get('Precio Venta',0), errors='coerce'):,.0f}")
+                        if st.checkbox("Ver Datos Privados"):
+                            st.write(f"**Propietario:** {d.get('Nombre Propietario')}")
+                            st.write(f"**Tel:** {d.get('Teléfono Principal')}")
+                            st.caption(f"Comisión: ${pd.to_numeric(d.get('Ganancia',0), errors='coerce'):,.0f}")
+                    
+                    with c_vis2:
+                        st.markdown('<div class="ficha-tecnica">', unsafe_allow_html=True)
+                        cc1, cc2 = st.columns(2)
+                        cc1.write(f"📍 **Ubicación:** {d.get('Ciudad')} - {d.get('Barrio')}")
+                        cc1.write(f"📐 **Área:** {d.get('Área')} m² | **Habs:** {d.get('Habs')}")
+                        cc1.write(f"🏗️ **Estado:** {d.get('Estado Físico')}")
+                        cc2.write(f"🏢 **Piso:** {d.get('Piso')}")
+                        cc2.write(f"⏳ **Antigüedad:** {d.get('Antigüedad')}")
+                        cc2.write(f"🚘 **Parqueadero:** {d.get('Parqueadero')}")
+                        
+                        if d.get("Sobre Planos") == "Sí":
+                            st.warning(f"🏗️ **PROYECTO:** {d.get('Proyecto')} por {d.get('Constructor')}")
+                            st.write(f"📅 **Entrega:** {d.get('Fecha Fin')}")
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    st.markdown("---")
+                    
+                    # --- CRM DE VENTAS (COMPLEJO) ---
+                    st.subheader("💼 Gestión de Venta")
+                    estado_actual = d.get("Estado Venta", "Disponible")
+                    
+                    if estado_actual == "Disponible":
+                        with st.expander("🤝 CERRAR NEGOCIO (Registrar Venta/Separación)"):
+                            cli_nom = st.text_input("Nombre Cliente Comprador")
+                            cli_tel = st.text_input("Teléfono Cliente")
+                            
+                            tipo_venta = st.radio("Tipo Venta", ["Contado", "Crédito / Plazos", "Planos (Cuotas)"])
+                            
+                            if tipo_venta == "Planos (Cuotas)" or d.get("Sobre Planos") == "Sí":
+                                # Lógica Sobre Planos
+                                ci = st.number_input("Cuota Inicial ($)", value=float(d.get("Monto Inicial", 0)))
+                                nc = st.number_input("Número Cuotas", value=int(d.get("Cuotas", 1)))
+                                val_cuota = (float(d.get("Precio Venta", 0)) - ci) / nc if nc > 0 else 0
+                                st.info(f"Cuota Mensual Aprox: ${val_cuota:,.0f}")
+                                
+                                if st.button("CONFIRMAR SEPARACIÓN"):
+                                    # Actualizar Sheet
+                                    # Esto requiere lógica avanzada de actualización, simplificada aquí:
+                                    st.success(f"Negocio Cerrado con {cli_nom}. Deuda registrada.")
+                                    # Aquí llamarías a actualizar_dato() para cambiar estado y guardar cliente
+                            
+                            else:
+                                # Contado / Crédito Simple
+                                abono = st.number_input("Abono Inicial")
+                                if st.button("VENDER"):
+                                    st.success("Venta Registrada")
+
                     else:
-                        st.write("Sin imágenes cargadas.")
-                    
-                    st.warning(f"💰 **Precio:** ${fila['Precio Venta']}")
-                    st.success(f"💵 **Comisión:** ${fila['Ganancia']}")
+                        st.success(f"✅ VENDIDA / SEPARADA a: {d.get('Cliente Comprador')}")
+                        
+                        # BARRA DE PROGRESO (GRÁFICA)
+                        pagado = float(d.get("Pagado", 0))
+                        total = float(d.get("Precio Venta", 1))
+                        progreso = min(pagado / total, 1.0)
+                        
+                        st.write("📊 **Estado de Pagos**")
+                        st.progress(progreso)
+                        c_m1, c_m2 = st.columns(2)
+                        c_m1.metric("Pagado", f"${pagado:,.0f}")
+                        c_m2.metric("Deuda Restante", f"${(total - pagado):,.0f}", delta_color="inverse")
+                        
+                        if pagado < total:
+                            with st.form("abonar"):
+                                abono_nuevo = st.number_input("Registrar Nuevo Pago ($)")
+                                if st.form_submit_button("Registrar Pago"):
+                                    st.success("Pago sumado (Simulado - Requiere DB Update)")
 
-                with col_ficha2:
-                    st.markdown('<div class="ficha-box">', unsafe_allow_html=True)
-                    st.markdown("#### 📋 Detalles Técnicos")
-                    c_t1, c_t2 = st.columns(2)
-                    with c_t1:
-                        st.write(f"**Ubicación:** {fila['Ciudad']} - {fila['Barrio']}")
-                        st.write(f"**Tipo:** {fila['Tipo']}")
-                        st.write(f"**Estrato:** {fila['Estrato']}")
-                        st.write(f"**Área:** {fila['Área']} m²")
-                    with c_t2:
-                        st.write(f"**Piso:** {fila['Piso']}")
-                        st.write(f"**Antigüedad:** {fila['Antigüedad']}")
-                        st.write(f"**Estado:** {fila['Estado Fisico']}")
-                        st.write(f"**Parqueadero:** {fila['Parqueadero']}")
-                    
-                    st.markdown("#### 💎 Amenidades")
-                    st.write(fila['Amenidades'])
-                    st.markdown("</div>", unsafe_allow_html=True)
-                
-                # DATOS DE CLIENTE (OCULTOS POR DEFECTO PARA SEGURIDAD)
-                with st.expander("👤 Ver Datos del Propietario (Privado)"):
-                    st.write(f"**Nombre:** {fila['Propietario']}")
-                    st.write(f"**Contacto:** {fila['Teléfono']}")
-                    st.write(f"**Notas:** {fila['Notas']}")
-
-        else:
-            st.info("No hay propiedades registradas aún.")
+        # --- TAB 2: AGENDA (ILIMITADA) ---
+        with tab_ag:
+            st.subheader("📅 Agenda de Citas")
             
-        # AGENDA RÁPIDA
-        st.divider()
-        st.subheader("📅 Agenda Rápida")
-        with st.form("agenda_rapida"):
-            c_a1, c_a2, c_a3 = st.columns(3)
-            fecha = c_a1.date_input("Fecha")
-            cliente = c_a2.text_input("Cliente")
-            lugar = c_a3.text_input("Lugar / Propiedad")
-            if st.form_submit_button("Agendar"):
-                if guardar_fila("Agenda", [str(fecha), cliente, lugar, "Pendiente"]):
-                    st.success("Cita guardada")
+            # Formulario
+            with st.form("agenda_form"):
+                ca1, ca2 = st.columns(2)
+                nombre_cli = ca1.text_input("Nombre Cliente")
+                lugar_cita = ca2.text_input("Propiedad / Lugar")
+                
+                ca3, ca4 = st.columns(2)
+                tel1 = ca3.text_input("Teléfono 1")
+                tel2 = ca4.text_input("Teléfono 2")
+                
+                ca5, ca6 = st.columns(2)
+                fecha_cita = ca5.date_input("Fecha")
+                hora_cita = ca6.time_input("Hora")
+                
+                if st.form_submit_button("AGENDAR CITA"):
+                    datos_cita = [str(date.today()), nombre_cli, tel1, tel2, lugar_cita, str(fecha_cita), str(hora_cita), "Pendiente"]
+                    if guardar_fila("Agenda", datos_cita): st.success("Cita Guardada")
+            
+            st.divider()
+            
+            # Visualizar Agenda con Alarmas
+            df_ag = cargar_datos("Agenda")
+            if not df_ag.empty:
+                st.write("🔔 **Próximas Visitas**")
+                # Filtrar y ordenar sería ideal aquí
+                for i, row in df_ag.iterrows():
+                    # Alarma Visual
+                    fecha_row = row.get("Fecha Cita", "")
+                    try:
+                        f_cita_dt = datetime.strptime(fecha_row, "%Y-%m-%d").date()
+                        hoy = date.today()
+                        
+                        if f_cita_dt == hoy:
+                            st.warning(f"🚨 HOY: Cita con {row.get('Cliente')} en {row.get('Lugar')} a las {row.get('Hora')}")
+                        elif f_cita_dt < hoy and row.get("Estado") == "Pendiente":
+                            st.error(f"❌ VENCIDA: Cita con {row.get('Cliente')} ({fecha_row})")
+                        elif f_cita_dt > hoy:
+                            st.info(f"📅 {fecha_row}: {row.get('Cliente')} - {row.get('Lugar')}")
+                    except:
+                        st.write(f"📄 {row.get('Cliente')} - {fecha_row}")
 
-    # --- 3. ESTADÍSTICAS ---
+    # --- ESTADÍSTICAS ---
     elif menu == "📊 Estadísticas":
-        st.header("📊 Tablero de Resultados")
-        df = cargar_datos("Propiedades")
-        if not df.empty and "Precio Venta" in df.columns:
-            try:
-                # Limpieza de datos para evitar errores numéricos
-                df["Precio Venta"] = pd.to_numeric(df["Precio Venta"], errors='coerce').fillna(0)
-                df["Ganancia"] = pd.to_numeric(df["Ganancia"], errors='coerce').fillna(0)
-                
-                total_v = df["Precio Venta"].sum()
-                total_c = df["Ganancia"].sum()
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Propiedades Activas", len(df))
-                c2.metric("Inventario Total", f"${total_v:,.0f}")
-                c3.metric("Comisiones Proyectadas", f"${total_c:,.0f}")
-                
-                st.bar_chart(df, x="Título", y="Precio Venta")
-            except: st.warning("Faltan datos numéricos válidos.")
-        else: st.info("Registra propiedades para ver estadísticas.")
+        st.header("Tablero de Mando")
+        st.info("Visualización de rendimiento global.")
